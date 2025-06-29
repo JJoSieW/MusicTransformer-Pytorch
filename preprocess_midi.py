@@ -40,6 +40,7 @@ def prep_maestro_midi(maestro_root, output_dir):
     val_count   = 0
     test_count  = 0
 
+    skipped_files = []
     for piece in maestro_json:
         mid         = os.path.join(maestro_root, piece["midi_filename"])
         split_type  = piece["split"]
@@ -58,11 +59,36 @@ def prep_maestro_midi(maestro_root, output_dir):
             print("ERROR: Unrecognized split type:", split_type)
             return False
 
-        prepped = midi_processor.encode_midi(mid)
+        # 添加错误处理
+        try:
+            prepped = midi_processor.encode_midi(mid)
+            if prepped is None:
+                print(f"Skipping file due to encoding error: {mid}")
+                skipped_files.append(mid)
+                # 调整计数器，因为跳过了这个文件
+                if split_type == "train":
+                    train_count -= 1
+                elif split_type == "validation":
+                    val_count -= 1
+                elif split_type == "test":
+                    test_count -= 1
+                continue
+        
+            o_stream = open(o_file, "wb")
+            pickle.dump(prepped, o_stream)
+            o_stream.close()
 
-        o_stream = open(o_file, "wb")
-        pickle.dump(prepped, o_stream)
-        o_stream.close()
+        except Exception as e:
+            print(f"Error processing file {mid}: {e}")
+            skipped_files.append(mid)
+            # 调整计数器
+            if split_type == "train":
+                train_count -= 1
+            elif split_type == "validation":
+                val_count -= 1
+            elif split_type == "test":
+                test_count -= 1
+            continue
 
         total_count += 1
         if(total_count % 50 == 0):
@@ -71,6 +97,11 @@ def prep_maestro_midi(maestro_root, output_dir):
     print("Num Train:", train_count)
     print("Num Val:", val_count)
     print("Num Test:", test_count)
+    print(f"Num Skipped: {len(skipped_files)}")
+    if skipped_files:
+        print("Skipped files:")
+        for f in skipped_files:
+            print(f"  - {f}")
     return True
 
 def prep_custom_midi(custom_midi_root, output_dir, valid_p = 0.1, test_p = 0.2):
@@ -96,17 +127,28 @@ def prep_custom_midi(custom_midi_root, output_dir, valid_p = 0.1, test_p = 0.2):
     val_count   = 0
     test_count  = 0
     
+    flag = 0
     for piece in os.listdir(custom_midi_root):
         #deciding whether the data should be part of train, valid or test dataset
-        is_train = True if random.random() > valid_p else False
-        if not is_train:
-            is_valid = True if random.random() > test_p else False
-        if is_train:
-            split_type  = "train"
-        elif is_valid:
+        if flag == 0:
             split_type = "validation"
-        else:
+            flag = 1
+        elif flag == 1:
             split_type = "test"
+            flag = 2
+        elif flag == 2:
+            split_type = "train"
+            flag = 3
+        else:
+            is_train = True if random.random() > valid_p else False
+            if not is_train:
+                is_valid = True if random.random() > test_p else False
+            if is_train:
+                split_type  = "train"
+            elif is_valid:
+                split_type = "validation"
+            else:
+                split_type = "test"
             
         mid         = os.path.join(custom_midi_root, piece)
         f_name      = piece.split(".")[0] + ".pickle"
@@ -149,8 +191,8 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("root", type=str, help="Root folder for the Maestro dataset or for custom data.")
-    parser.add_argument("-output_dir", type=str, default="./dataset/e_piano", help="Output folder to put the preprocessed midi into.")
+    parser.add_argument("-root", type=str, required=True, help="Root folder for the Maestro dataset or for custom data.")
+    parser.add_argument("-output_dir", type=str, required=True, help="Output folder to put the preprocessed midi into.")
     parser.add_argument("--custom_dataset", action="store_true", help="Whether or not the specified root folder contains custom data.")
 
     return parser.parse_args()
@@ -166,7 +208,7 @@ def main():
     """
 
     args            = parse_args()
-    root    = args.root
+    root            = args.root
     output_dir      = args.output_dir
 
     print("Preprocessing midi files and saving to", output_dir)

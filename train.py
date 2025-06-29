@@ -10,7 +10,7 @@ from torch.optim import Adam
 from dataset.e_piano import create_epiano_datasets, compute_epiano_accuracy
 
 from model.music_transformer import MusicTransformer
-from model.loss import SmoothCrossEntropyLoss
+from model.loss import SmoothCrossEntropyLoss, ContourLoss, CombinedLoss
 
 from utilities.constants import *
 from utilities.device import get_device, use_cuda
@@ -18,7 +18,12 @@ from utilities.lr_scheduling import LrStepTracker, get_lr
 from utilities.argument_funcs import parse_train_args, print_train_args, write_model_params
 from utilities.run_model import train_epoch, eval_model
 
-CSV_HEADER = ["Epoch", "Learn rate", "Avg Train loss", "Train Accuracy", "Avg Eval loss", "Eval accuracy"]
+from tqdm import tqdm
+import json
+import matplotlib.pyplot as plt
+
+
+CSV_HEADER = ["Epoch", "Learn rate", "Avg Train loss", "Train Accuracy", "Avg Val loss", "Val accuracy"]
 
 # Baseline is an untrained epoch that we evaluate as a baseline loss and accuracy
 BASELINE_EPOCH = -1
@@ -103,14 +108,37 @@ def main():
     else:
         lr = args.lr
 
-    ##### Not smoothing evaluation loss #####
-    eval_loss_func = nn.CrossEntropyLoss(ignore_index=TOKEN_PAD)
 
     ##### SmoothCrossEntropyLoss or CrossEntropyLoss for training #####
-    if(args.ce_smoothing is None):
-        train_loss_func = eval_loss_func
-    else:
-        train_loss_func = SmoothCrossEntropyLoss(args.ce_smoothing, VOCAB_SIZE, ignore_index=TOKEN_PAD)
+    # if(args.ce_smoothing is None):
+    #     train_loss_func = eval_loss_func
+    # else:
+    #     train_loss_func = SmoothCrossEntropyLoss(args.ce_smoothing, VOCAB_SIZE, ignore_index=TOKEN_PAD)
+    
+    # ignore_indices: for SmoothCrossEntropyLoss
+    ignore_indices = list(range(TOKEN_NOTE, TOKEN_NOTE + TOKEN_CONTOUR)) + [TOKEN_PAD]
+    
+    smooth_entropy_loss = SmoothCrossEntropyLoss(
+        label_smoothing=args.ce_smoothing,
+        vocab_size=VOCAB_SIZE,
+        ignore_index=ignore_indices
+    )
+
+    contour_aware_loss = ContourLoss(margin=0.87)
+    
+    # Smooth schedule: from 0.05 to 0.3 over 50 epochs
+    def lambda_scheduler(epoch):
+        return min(0.05 + 0.005 * epoch, 0.3)
+    
+    train_loss_func = CombinedLoss(
+        ce_loss_fn=smooth_entropy_loss,
+        contour_loss_fn=contour_aware_loss,
+        lambda_contour_scheduler=lambda_scheduler
+    )
+
+    eval_loss_func = train_loss_func
+
+
 
     ##### Optimizer #####
     opt = Adam(model.parameters(), lr=lr, betas=(ADAM_BETA_1, ADAM_BETA_2), eps=ADAM_EPSILON)
@@ -134,48 +162,66 @@ def main():
 
 
     ##### TRAIN LOOP #####
-    for epoch in range(start_epoch, args.epochs):
+    # 添加总体训练进度条
+    epoch_range = range(start_epoch, args.epochs)
+    epoch_pbar = tqdm(epoch_range, desc='Training Progress', unit='epoch', leave=True)
+    
+    train_loss_curve = []
+    val_loss_curve = []
+    train_acc_curve = []
+    val_acc_curve = []
+    
+    for epoch in epoch_pbar:
         # Baseline has no training and acts as a base loss and accuracy (epoch 0 in a sense)
         if(epoch > BASELINE_EPOCH):
-            print(SEPERATOR)
-            print("NEW EPOCH:", epoch+1)
-            print(SEPERATOR)
-            print("")
-
+            epoch_pbar.set_postfix({'Phase': 'Training'})
+            
             # Train
             train_epoch(epoch+1, model, train_loader, train_loss_func, opt, lr_scheduler, args.print_modulus)
 
-            print(SEPERATOR)
-            print("Evaluating:")
+            epoch_pbar.set_postfix({'Phase': 'Evaluating'})
         else:
-            print(SEPERATOR)
-            print("Baseline model evaluation (Epoch 0):")
+            epoch_pbar.set_postfix({'Phase': 'Baseline Eval'})
 
-        # Eval
+        # Validation
         train_loss, train_acc = eval_model(model, train_loader, train_loss_func)
-        eval_loss, eval_acc = eval_model(model, test_loader, eval_loss_func)
+        val_loss, val_acc = eval_model(model, val_loader, eval_loss_func)
+
+        train_loss_curve.append(train_loss)
+        val_loss_curve.append(val_loss)
+        train_acc_curve.append(train_acc)
+        val_acc_curve.append(val_acc)
 
         # Learn rate
         lr = get_lr(opt)
 
+        # 更新总体进度条信息
+        epoch_pbar.set_postfix({
+            'Train Loss': f'{train_loss:.4f}',
+            'Train Acc': f'{train_acc:.4f}',
+            'Val Loss': f'{val_loss:.4f}',
+            'Val Acc': f'{val_acc:.4f}',
+            'LR': f'{lr:.6f}'
+        })
+
         print("Epoch:", epoch+1)
         print("Avg train loss:", train_loss)
         print("Avg train acc:", train_acc)
-        print("Avg eval loss:", eval_loss)
-        print("Avg eval acc:", eval_acc)
+        print("Avg val loss:", val_loss)
+        print("Avg val acc:", val_acc)
         print(SEPERATOR)
         print("")
 
         new_best = False
 
-        if(eval_acc > best_eval_acc):
-            best_eval_acc = eval_acc
+        if(val_acc > best_eval_acc):
+            best_eval_acc = val_acc
             best_eval_acc_epoch  = epoch+1
             torch.save(model.state_dict(), best_acc_file)
             new_best = True
 
-        if(eval_loss < best_eval_loss):
-            best_eval_loss       = eval_loss
+        if(val_loss < best_eval_loss):
+            best_eval_loss       = val_loss
             best_eval_loss_epoch = epoch+1
             torch.save(model.state_dict(), best_loss_file)
             new_best = True
@@ -192,9 +238,9 @@ def main():
 
         if(not args.no_tensorboard):
             tensorboard_summary.add_scalar("Avg_CE_loss/train", train_loss, global_step=epoch+1)
-            tensorboard_summary.add_scalar("Avg_CE_loss/eval", eval_loss, global_step=epoch+1)
+            tensorboard_summary.add_scalar("Avg_CE_loss/val", val_loss, global_step=epoch+1)
             tensorboard_summary.add_scalar("Accuracy/train", train_acc, global_step=epoch+1)
-            tensorboard_summary.add_scalar("Accuracy/eval", eval_acc, global_step=epoch+1)
+            tensorboard_summary.add_scalar("Accuracy/val", val_acc, global_step=epoch+1)
             tensorboard_summary.add_scalar("Learn_rate/train", lr, global_step=epoch+1)
             tensorboard_summary.flush()
 
@@ -205,7 +251,47 @@ def main():
 
         with open(results_file, "a", newline="") as o_stream:
             writer = csv.writer(o_stream)
-            writer.writerow([epoch+1, lr, train_loss, train_acc, eval_loss, eval_acc])
+            writer.writerow([epoch+1, lr, train_loss, train_acc, val_loss, val_acc])
+
+    # Save loss curves to JSON
+    loss_curve_file = os.path.join(args.output_dir, "loss_curve.json")
+    with open(loss_curve_file, "w") as f:
+        json.dump({
+            "train_loss": train_loss_curve,
+            "val_loss": val_loss_curve,
+            "train_acc": train_acc_curve,
+            "val_acc": val_acc_curve
+        }, f)
+
+
+    # Plot loss and accuracy curves using matplotlib
+
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+
+    # Plot loss curves
+    ax1.plot(train_loss_curve, label='Train Loss')
+    ax1.plot(val_loss_curve, label='Validation Loss') 
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training and Validation Loss')
+    ax1.legend()
+    ax1.grid(True)
+
+    # Plot accuracy curves
+    ax2.plot(train_acc_curve, label='Train Accuracy')
+    ax2.plot(val_acc_curve, label='Validation Accuracy')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Accuracy')
+    ax2.set_title('Training and Validation Accuracy')
+    ax2.legend()
+    ax2.grid(True)
+
+    # Adjust layout and save figure
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.output_dir, 'learning_curves.png'))
+    plt.close()
+
 
     # Sanity check just to make sure everything is gone
     if(not args.no_tensorboard):

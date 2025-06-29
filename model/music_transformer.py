@@ -72,7 +72,9 @@ class MusicTransformer(nn.Module):
         self.Wout       = nn.Linear(self.d_model, VOCAB_SIZE)
         self.softmax    = nn.Softmax(dim=-1)
 
-    # forward
+
+
+
     def forward(self, x, mask=True):
         """
         ----------
@@ -83,32 +85,52 @@ class MusicTransformer(nn.Module):
         A prediction at one index is the "next" prediction given all information seen previously.
         ----------
         """
-
+        # zqx notes:
+        # 不需要加入contour token
+        # 原因：
+        # 这是注意力掩码，不是token过滤掩码
+            # 作用：
+            # 这是因果掩码（Causal Mask），用于确保模型在预测时只能看到当前位置之前的信息
+            # 防止模型"作弊"，即预测时看到未来的信息
+            # 形状是 [seq_len, seq_len] 的下三角矩阵
+                        # 序列: [A, B, C, D]
+                        # 掩码: [[1, 0, 0, 0],  # A只能看到A
+                        #     [1, 1, 0, 0],  # B能看到A,B
+                        #     [1, 1, 1, 0],  # C能看到A,B,C
+                        #     [1, 1, 1, 1]]  # D能看到A,B,C,D
+        # contour token应该参与注意力计算，因为它们包含重要的音乐结构信息
+        # 损失函数中的ignore_indices才是用来忽略contour token的地
         if(mask is True):
             mask = self.transformer.generate_square_subsequent_mask(x.shape[1]).to(get_device())
         else:
             mask = None
 
-        x = self.embedding(x)
+        # # Debug: check input range
+        # print(f"Input shape: {x.shape}")
+        # print(f"Input min: {x.min(}, max: {x.max()}")
+        # print(f"VOCAB_SIZE: {VOCAB_SIZE}")
+        # if x.max() >= VOCAB_SIZE:
+        #     print(f"ERROR: Input contains values >= VOCAB_SIZE ({VOCAB_SIZE})")
+        #     print(f"Unique values in input: {torch.unique(x)}")
+        #     exit()
 
-        # Input shape is (max_seq, batch_size, d_model)
-        x = x.permute(1,0,2)
+        x_embed = self.embedding(x)  # (batch, seq, d_model) x_embed.shape: torch.Size([2, 2048, 256])
 
-        x = self.positional_encoding(x)
+        # Input shape is (seq_len, batch_size, d_model)
+        x_embed = x_embed.permute(1, 0, 2)
+
+        x_embed = self.positional_encoding(x_embed)
 
         # Since there are no true decoder layers, the tgt is unused
-        # Pytorch wants src and tgt to have some equal dims however
-        x_out = self.transformer(src=x, tgt=x, src_mask=mask)
+        x_out = self.transformer(src=x_embed, tgt=x_embed, src_mask=mask)
 
-        # Back to (batch_size, max_seq, d_model)
-        x_out = x_out.permute(1,0,2)
+        # Back to (batch_size, seq_len, d_model)
+        x_out = x_out.permute(1, 0, 2)
 
         y = self.Wout(x_out)
-        # y = self.softmax(y)
 
         del mask
 
-        # They are trained to predict the next note in sequence (we don't need the last one)
         return y
 
     # generate

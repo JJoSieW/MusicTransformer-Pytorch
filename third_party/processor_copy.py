@@ -221,7 +221,12 @@ def encode_midi(file_path):
     events = []
     notes = []
     contours = []
-    mid = pretty_midi.PrettyMIDI(midi_file=file_path)
+    
+    try:
+        mid = pretty_midi.PrettyMIDI(midi_file=file_path)
+    except Exception as e:
+        print(f"Error reading MIDI file {file_path}: {e}")
+        return None
 
     for inst in mid.instruments: # only one instrument - piano, so only one iteration
         inst_notes = inst.notes   # inst_notes[0] Note(start=990.871094, end=990.904948, pitch=67, velocity=105)
@@ -230,21 +235,29 @@ def encode_midi(file_path):
         ctrls = _control_preprocess([ctrl for ctrl in inst.control_changes if ctrl.number == 64]) 
         notes = _note_preprocess(ctrls, inst_notes)  # prprcss[0] Note(start=990.871094, end=990.904948, pitch=67, velocity=105)
         
-        # extract the contour
-        melody_contour_extractor = MelodyContourExtractor(notes)
-        contour = melody_contour_extractor.get_final_contour()  # contour[0] = (start_time, interval)
+        # extract the contour with error handling
+        try:
+            melody_contour_extractor = MelodyContourExtractor(notes)
+            contour = melody_contour_extractor.get_final_contour()  # contour[0] = (start_time, interval)
+
+            ## Plot the contour
+            # melody_contour_extractor.plot_segment(start_time=500, duration=100)
+            # plt.savefig('./zzz-figs/contour_500_600.png', dpi=300, bbox_inches='tight')
+            # plt.show()
         
-        ## Plot the contour
-        # melody_contour_extractor.plot_segment(start_time=500, duration=100)
-        # plt.savefig('./zzz-figs/contour_500_600.png', dpi=300, bbox_inches='tight')
-        # plt.show()
-
-        contours.append(contour)
-
+            contours.append(contour)
+        except ValueError as e:
+            print(f"Skipping file {file_path}: {e}")
+            # 直接返回None，跳过整个文件
+            return None
+        except Exception as e:
+            print(f"Unexpected error processing contour in {file_path}: {e}")
+            # 直接返回None，跳过整个文件
+            return None
 
     # 创建轮廓时间映射
     contour_map = {}
-    if contours:
+    if contours and contours[0]:  # 检查contour是否为空
         for start_time, interval, duration in contours[0]:  
             contour_map[start_time] = (interval, duration)
 
