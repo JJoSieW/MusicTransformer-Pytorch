@@ -5,10 +5,10 @@ import numpy as np
 
 RANGE_NOTE_ON = 128
 RANGE_NOTE_OFF = 128
-RANGE_VEL = 32
 RANGE_TIME_SHIFT = 100
+RANGE_VEL = 32
 RANGE_CONTOUR_INTERVAL = 201  # 0-200 (对应-100到+100)
-RANGE_CONTOUR_DURATION = 20   # 1-20
+RANGE_CONTOUR_DURATION = 200   # 1-50
 
 START_IDX = {
     'note_on': 0,
@@ -233,8 +233,10 @@ def encode_midi(file_path):
         # extract the contour
         melody_contour_extractor = MelodyContourExtractor(notes)
         contour = melody_contour_extractor.get_final_contour()  # contour[0] = (start_time, interval)
-        # melody_contour_extractor.plot_segment(start_time=0, duration=25)
-        # plt.savefig('./zzz-figs/contour_first25s_v2.png', dpi=300, bbox_inches='tight')
+        
+        ## Plot the contour
+        # melody_contour_extractor.plot_segment(start_time=500, duration=100)
+        # plt.savefig('./zzz-figs/contour_500_600.png', dpi=300, bbox_inches='tight')
         # plt.show()
 
         contours.append(contour)
@@ -260,13 +262,15 @@ def encode_midi(file_path):
             matched_start_time = None
             for start_time, (interval, duration) in contour_map.items():
                 if abs(snote.time - start_time) < 0.05:  # 时间容差
+                    # print('start_time, (interval, duration): ', start_time, (interval, duration))
                     # 映射interval到0-200范围
                     mapped_interval = max(0, min(200, interval + 100))
                     
                     # 将duration转换为与time_shift相同的单位 (0.01秒)
                     duration_in_centiseconds = int(duration * 100)  # 秒转0.01秒
-                    mapped_duration = max(1, min(500, duration_in_centiseconds))
-                    
+                    mapped_duration = max(1, min(200, duration_in_centiseconds))
+                    # print('mapped_duration: ', mapped_duration)
+                    # print('mapped_interval: ', mapped_interval)
                     # 插入轮廓事件
                     contour_interval_event = Event('contour_interval', mapped_interval)
                     contour_duration_event = Event('contour_duration', mapped_duration)
@@ -279,7 +283,7 @@ def encode_midi(file_path):
             # 删除已处理的轮廓
             if matched_start_time is not None:
                 del contour_map[matched_start_time]
-        
+
         # 添加时间间隔事件
         events += _make_time_sift_events(prev_time=cur_time, post_time=snote.time)
         # 添加音符事件
@@ -289,6 +293,7 @@ def encode_midi(file_path):
         cur_vel = snote.velocity
     # events <Event type: velocity, value: 26>, <Event type: note_on, value: 67>, <Event type: time_shift, value: 0>, <Event type: note_off, value: 67>
     # print('events: ', events)
+    # exit
     
     # # 可视化轮廓
     # if contours and contours[0]:
@@ -338,6 +343,12 @@ def encode_midi(file_path):
     #         print(f"Duration范围: {min(durations):.2f}s - {max(durations):.2f}s")
     #     else:
     #         print("前25秒内没有找到轮廓数据")
+    
+    # Save events to a text file
+    # with open("encoded_events1.txt", "w") as f:
+    #     for e in events:
+    #         f.write(f"{e}\n")
+    # exit()
     return [e.to_int() for e in events]
 
 def decode_midi(idx_array, file_path=None):
