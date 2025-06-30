@@ -5,6 +5,8 @@ from torch.utils.data import DataLoader
 from dataset.e_piano import create_epiano_datasets, compute_epiano_accuracy
 
 from model.music_transformer import MusicTransformer
+from model.loss import SmoothCrossEntropyLoss
+
 
 from utilities.constants import *
 from utilities.device import get_device, use_cuda
@@ -40,8 +42,16 @@ def main():
 
     model.load_state_dict(torch.load(args.model_weights))
 
-    # No smoothed loss
-    loss = nn.CrossEntropyLoss(ignore_index=TOKEN_PAD)
+    # use smoothed loss, as standard ce_loss only takes one ignore_index, while I have multiple (token_pad and token_contour)
+    ignore_indices = list(range(TOKEN_NOTE, TOKEN_NOTE + TOKEN_CONTOUR)) + [TOKEN_PAD]
+
+    loss = SmoothCrossEntropyLoss(
+        label_smoothing=args.ce_smoothing,
+        vocab_size=VOCAB_SIZE,
+        ignore_index=ignore_indices
+    )
+    
+    # loss = nn.CrossEntropyLoss(ignore_index=TOKEN_PAD)   # previous version
 
     print("Evaluating:")
     model.eval()

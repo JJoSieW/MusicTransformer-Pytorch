@@ -126,9 +126,18 @@ def main():
 
     contour_aware_loss = ContourLoss(margin=0.87)
     
-    # Smooth schedule: from 0.05 to 0.3 over 50 epochs
+    # 原设定：前50个epoch才增长完成
+    # 更实用的 lambda_schedule（收敛前稳定）：
+    # 优点：训练中期（第15轮）λ 就稳定，contour loss 提前发挥；
+	# •	兼顾收敛和泛化：也不会训练一开始就干扰 token-level 预测；
+	# •	适合你当前 30~50 epoch 的训练周期。
     def lambda_scheduler(epoch):
-        return min(0.05 + 0.005 * epoch, 0.3)
+        warmup_epochs = 15
+        max_lambda = 0.3
+        if epoch <= warmup_epochs:
+            return (epoch / warmup_epochs) * max_lambda
+        else:
+            return max_lambda
     
     train_loss_func = CombinedLoss(
         ce_loss_fn=smooth_entropy_loss,
@@ -237,8 +246,8 @@ def main():
 
 
         if(not args.no_tensorboard):
-            tensorboard_summary.add_scalar("Avg_CE_loss/train", train_loss, global_step=epoch+1)
-            tensorboard_summary.add_scalar("Avg_CE_loss/val", val_loss, global_step=epoch+1)
+            tensorboard_summary.add_scalar("Avg_combined_loss/train", train_loss, global_step=epoch+1)
+            tensorboard_summary.add_scalar("Avg_combined_loss/val", val_loss, global_step=epoch+1)
             tensorboard_summary.add_scalar("Accuracy/train", train_acc, global_step=epoch+1)
             tensorboard_summary.add_scalar("Accuracy/val", val_acc, global_step=epoch+1)
             tensorboard_summary.add_scalar("Learn_rate/train", lr, global_step=epoch+1)
@@ -296,6 +305,12 @@ def main():
     # Sanity check just to make sure everything is gone
     if(not args.no_tensorboard):
         tensorboard_summary.flush()
+
+    # 在代码中查看
+    print(f"CUDA available: {torch.cuda.is_available()}")
+    print(f"GPU count: {torch.cuda.device_count()}")
+    print(f"Current device: {torch.cuda.current_device()}")
+    print(f"Device name: {torch.cuda.get_device_name()}")
 
     return
 
