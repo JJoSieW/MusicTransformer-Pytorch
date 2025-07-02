@@ -133,28 +133,47 @@ class ContourLoss(nn.Module):
                 first_note_time = None
                 first_note_pitch = None
 
+                # 收集这段 contour_duration 内所有 note_on
+                notes_in_segment = []
                 j = i + 2
+                time_passed = 0
                 while j < len(event_sequence) and time_passed < contour_duration:
                     e = event_sequence[j]
                     if e.type == "time_shift":
                         time_passed += e.value
                     elif e.type == "note_on":
-                        note_pitches.append(e.value)
-                        if first_note_time is None:
-                            first_note_time = time_passed
-                            first_note_pitch = e.value
-                            note_vectors.append((0, 0))
-                        else:
-                            dt = time_passed - first_note_time
-                            dp = e.value - first_note_pitch
-                            note_vectors.append((dt, dp))
+                        notes_in_segment.append((time_passed, e.value))  # (time, pitch)
                     j += 1
+
+                if not notes_in_segment:
+                    i = j
+                    continue
+
+                # 分成 5 个时间段（均匀划分）
+                slice_num = 5
+                interval_len = contour_duration / slice_num
+                selected_vectors = []
+                first_time, first_pitch = notes_in_segment[0]
+
+                for k in range(slice_num):
+                    t_start = k * interval_len
+                    t_end = (k + 1) * interval_len
+                    candidates = [note for note in notes_in_segment if t_start <= note[0] < t_end]
+                    if not candidates:
+                        continue
+                    max_note = max(candidates, key=lambda x: x[1])  # 取最高 pitch
+                    dt = max_note[0] - first_time
+                    dp = max_note[1] - first_pitch
+                    selected_vectors.append((dt, dp))
+
+                if not selected_vectors:
+                    i = j
+                    continue
 
                 pairs.append({
                     "contour_interval": contour_interval,
                     "contour_duration": contour_duration,
-                    "note_on_pitches": note_pitches,
-                    "note_vectors": note_vectors,
+                    "note_vectors": selected_vectors,
                     "start_idx": i,
                     "end_idx": j
                 })
