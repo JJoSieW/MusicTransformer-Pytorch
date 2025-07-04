@@ -15,7 +15,8 @@ class Note:
     
 class MelodyContourExtractor:
     
-    def __init__(self, raw_melody_sequence, smooth_keep_ratio=1/3, smooth_window=3, merge_threshold=0):
+    # merge_threshold: units of 1 second
+    def __init__(self, raw_melody_sequence, smooth_keep_ratio=1/3, smooth_window=3, merge_threshold=2):
         self.raw_melody_sequence = raw_melody_sequence
         self.melody_notes = self.extract_main_melody_track()
         # self.pitches = [n.abs_pitch for n in self.melody_notes]
@@ -23,64 +24,66 @@ class MelodyContourExtractor:
             raise ValueError("No melody track found.")
         self.melody_notes.sort(key=lambda n: n.onset)
         self.smooth_keep_ratio = smooth_keep_ratio
-        self.smooth_window = smooth_window
+        # self.smooth_window = smooth_window
         self.merge_threshold = merge_threshold
         self.smoothed_notes = self.smooth_melody()
 
     def extract_main_melody_track(self):
-        """时间取整版本：先取整时间，再提取主旋律"""
-        
-        # 将MIDI音符转换为Note对象，并取整时间
-        melody_notes = []
-        time_resolution = 0.1  # 100ms分辨率，可以调整
-        
-        for note in self.raw_melody_sequence:
-            # 取整开始和结束时间
-            onset = round(note.start / time_resolution) * time_resolution
-            end = round(note.end / time_resolution) * time_resolution
-            duration = end - onset
-            
-            # 确保duration不为0
-            if duration < time_resolution:
-                duration = time_resolution
-                end = onset + duration
-            
-            abs_pitch = note.pitch
-            melody_notes.append(Note(onset, duration, abs_pitch))
-        
-        if not melody_notes:
-            return None
-        
-        # 创建事件列表：note_on 和 note_off
-        events = []
-        for note in melody_notes:
-            events.append((note.onset, 'on', note))
-            events.append((note.onset + note.duration, 'off', note))
-        
-        # 按时间排序事件
-        events.sort(key=lambda x: x[0])
-        
-        # 处理事件
-        active_notes = set()
-        monophonic = []
-        last_note_end = -1
-        
-        for time_point, event_type, note in events:
-            if event_type == 'on':
-                active_notes.add(note)
-            else:  # 'off'
-                active_notes.discard(note)
-            
-            # 如果当前有活跃音符，选择最高音
-            if active_notes:
-                highest_note = max(active_notes, key=lambda n: n.abs_pitch)
-                
-                # 检查是否与上一个音符重叠
-                if highest_note.onset >= last_note_end:
-                    monophonic.append(highest_note)
-                    last_note_end = highest_note.onset + highest_note.duration
-        
-        return monophonic
+        """使用滑动窗口从 polyphonic 音乐中提取主旋律。"""
+
+        window_size = 1     # 窗口大小（秒）
+        hop_size = 0.5        # 滑动步长（秒）
+
+        all_notes = self.raw_melody_sequence  # 必须有属性 raw_melody_sequence
+        if not all_notes:
+            return []
+
+        # 获取整个片段的最大时间
+        max_time = max(note.end for note in all_notes)
+
+        selected_notes = []
+        selected_times = set()
+
+        cur_time = 0.0
+        while cur_time < max_time:
+            # 找到当前窗口中的 notes
+            window_notes = [note for note in all_notes if cur_time <= note.start < cur_time + window_size]
+
+            if window_notes:
+                # 选择 pitch + velocity 加权最高的音符
+                best_note = max(window_notes, key=lambda n: n.pitch + n.velocity / 10.0)
+                if best_note.start not in selected_times:  # 避免重复
+                    selected_notes.append(Note(
+                        onset=best_note.start,
+                        duration=best_note.end - best_note.start,
+                        abs_pitch=best_note.pitch
+                    ))
+                    selected_times.add(best_note.start)
+
+            cur_time += hop_size
+
+        # # 可视化
+        # plt.figure(figsize=(12, 6))
+        # raw_onsets = [n.start for n in all_notes]
+        # raw_pitches = [n.pitch for n in all_notes]
+        # plt.scatter(raw_onsets, raw_pitches, c='blue', alpha=0.5, label='Raw')
+
+        # mono_onsets = [n.onset for n in selected_notes]
+        # mono_pitches = [n.abs_pitch for n in selected_notes]
+        # plt.scatter(mono_onsets, mono_pitches, c='red', alpha=0.7, label='Melody')
+
+        # plt.xlabel("Time (s)")
+        # plt.ylabel("MIDI Pitch")
+        # plt.title("Extracted Melody")
+        # plt.legend()
+        # plt.grid(True)
+        # plt.xlim(0, 20)
+        # plt.tight_layout()
+        # plt.savefig("./zzz-figs/july4/extracted_melody_no1.png", dpi=300)
+        # plt.show()
+        # exit()
+
+        return selected_notes
     
     
     def smooth_melody(self):
@@ -138,45 +141,84 @@ class MelodyContourExtractor:
             is_last = (i == len(notes) - 1)
             dir_changed = (curr_dir != direction)
             if dir_changed or is_last:
-                end_idx = i if dir_changed else i + 1
-                start_pitch = notes[start_idx].abs_pitch
-                end_pitch = notes[end_idx - 1].abs_pitch
-                interval = end_pitch - start_pitch
-                start_time = notes[start_idx].onset
-                duration = notes[start_idx].duration
-                simplified.append((start_time, interval, duration))
-                start_idx = i - 1
-                direction = curr_dir
+                end_idx = i 
+                if dir_changed and not is_last:
+                    # print(dir_changed, is_last)
+                    # append the interval from start_idx to end_idx - 1
+                    start_pitch = notes[start_idx].abs_pitch
+                    end_pitch = notes[end_idx - 1].abs_pitch
+                    interval = end_pitch - start_pitch
+                    start_time = notes[start_idx].onset
+                    duration = notes[end_idx - 1].onset - notes[start_idx].onset
+                    simplified.append((start_time, interval, duration))
+                    start_idx = i - 1
+                    direction = curr_dir
+                elif dir_changed and is_last:
+                    # print(dir_changed, is_last)
+                    # append the interval from start_idx to end_idx - 1
+                    start_pitch = notes[start_idx].abs_pitch
+                    end_pitch = notes[end_idx - 1].abs_pitch
+                    interval = end_pitch - start_pitch
+                    start_time = notes[start_idx].onset
+                    duration = notes[end_idx - 1].onset - notes[start_idx].onset
+                    simplified.append((start_time, interval, duration))
+                    # append the interval from end_idx - 1  to end_idx
+                    start_pitch = notes[end_idx - 1].abs_pitch
+                    end_pitch = notes[end_idx].abs_pitch
+                    interval = end_pitch - start_pitch
+                    start_time = notes[end_idx - 1].onset
+                    duration = notes[end_idx].onset - notes[end_idx - 1].onset
+                    simplified.append((start_time, interval, duration))
+                elif is_last and not dir_changed:
+                    # print(dir_changed, is_last)
+                    # append the interval from start_idx to end_idx
+                    start_pitch = notes[start_idx].abs_pitch
+                    end_pitch = notes[end_idx].abs_pitch
+                    interval = end_pitch - start_pitch
+                    start_time = notes[start_idx].onset
+                    duration = notes[end_idx].onset - notes[start_idx].onset
+                    simplified.append((start_time, interval, duration))
+
         return simplified
 
-    # def merge_small_intervals(self, contour):
-    #     if not contour:
-    #         return []
-    #     merged = []
-    #     if len(contour[0]) == 3:
-    #         for start_time, interval, dur in contour:
-    #             if merged and abs(interval) <= self.merge_threshold:
-    #                 prev_start_time, prev_iv, prev_dur = merged[-1]
-    #                 merged[-1] = (prev_start_time, prev_iv + interval, prev_dur + dur)
+    def merge_small_intervals(self, contour):
+        if not contour:
+            return []
+        merged = []
+        # for start_time, interval, dur in contour:
+        #     if merged and dur <= self.merge_threshold:
+        #         prev_start_time, prev_iv, prev_dur = merged[-1]
+        #         merged[-1] = (prev_start_time, prev_iv + interval, prev_dur + dur)
+        for start_time, interval, dur in contour:
+            if merged:
+                prev_start_time, prev_iv, prev_dur = merged[-1]
+                if prev_dur <= self.merge_threshold:
                     
-    #             else:
-    #                 merged.append((start_time, interval, dur))
+                    merged[-1] = (prev_start_time, prev_iv + interval, prev_dur + dur)
+                else:
+                    merged.append((start_time, interval, dur))
+            else:
+                merged.append((start_time, interval, dur))
+                
+        # return merged    
+        
+        merge_same_sign = []
+        for start_time, interval, dur in merged:
+            if merge_same_sign:
+                prev_start_time, prev_iv, prev_dur = merge_same_sign[-1]
+                if (prev_iv * interval > 0) or (prev_iv == 0 and interval == 0): # same sign
+                    merge_same_sign[-1] = (prev_start_time, prev_iv + interval, prev_dur + dur)
+                else:
+                    merge_same_sign.append((start_time, interval, dur))
+            else:
+                merge_same_sign.append((start_time, interval, dur))
                     
-    #         merged = [(start_time, interval) for start_time, interval, _ in merged]
-    #     elif len(contour[0]) == 2:
-    #         for start_time, interval in contour:
-    #             if merged and abs(interval) <= self.merge_threshold:
-    #                 prev_start_time, prev_iv, prev_dur = merged[-1]
-    #                 merged[-1] = (prev_start_time, prev_iv + interval, prev_dur + dur)
-                    
-    #             else:
-    #                 merged.append((start_time, interval))
 
-    #     return merged
+        return merge_same_sign
 
     def get_final_contour(self):
         contour = self.simplify_contour()
-        
+        contour = self.merge_small_intervals(contour)
         return contour
 
     def print_final_contour(self):
@@ -235,7 +277,7 @@ class MelodyContourExtractor:
         
         
         ######################################################
-        #画到结尾就删了
+        #如果要画到结尾就删了
         
         # 获取最大横坐标限制 - 以abs_path_x[-1]为标准
         max_x = abs_path_x[-1] if abs_path_x else 0

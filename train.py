@@ -126,24 +126,27 @@ def main():
 
     contour_aware_loss = ContourLoss(margin=0.87)
     
-    # 原设定：前50个epoch才增长完成
-    # 更实用的 lambda_schedule（收敛前稳定）：
-    # 优点：训练中期（第15轮）λ 就稳定，contour loss 提前发挥；
-	# •	兼顾收敛和泛化：也不会训练一开始就干扰 token-level 预测；
-	# •	适合你当前 30~50 epoch 的训练周期。
-    def lambda_scheduler(epoch):
-        warmup_epochs = 15
-        max_lambda = 0.3
-        if epoch <= warmup_epochs:
-            return (epoch / warmup_epochs) * max_lambda
-        else:
-            return max_lambda
     
-    train_loss_func = CombinedLoss(
-        ce_loss_fn=smooth_entropy_loss,
-        contour_loss_fn=contour_aware_loss,
-        lambda_contour_scheduler=lambda_scheduler
-    )
+    # ① 基础学习阶段  0–15    仅 ce_loss         λ = 0
+    # ② 引导轮廓阶段  15–30   ce + λ·contour     λ 从 0 增到 0.3
+    # ③ 融合优化阶段  30–60+  ce + 0.3·contour   固定 λ = 0.3（或 0.2)
+
+    def lambda_scheduler(epoch):
+        if epoch < 15:
+            return 0.0
+        elif epoch < 30:
+            return (epoch - 15) / 15 * 0.3
+        else:
+            return 0.3
+    
+    if(args.ablation_mode):
+        train_loss_func = smooth_entropy_loss
+    else:
+        train_loss_func = CombinedLoss(
+            ce_loss_fn=smooth_entropy_loss,
+            contour_loss_fn=contour_aware_loss,
+            lambda_contour_scheduler=lambda_scheduler
+        )
 
     eval_loss_func = train_loss_func
 

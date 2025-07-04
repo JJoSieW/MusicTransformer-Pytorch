@@ -40,6 +40,8 @@ def parse_train_args():
     parser.add_argument("-dim_feedforward", type=int, default=1024, help="Dimension of the feedforward layer")
 
     parser.add_argument("-dropout", type=float, default=0.1, help="Dropout rate")
+    
+    parser.add_argument("--ablation_mode", action="store_true", help="Train an ablation model")
     return parser.parse_args()
 
 # print_train_args
@@ -78,6 +80,7 @@ def print_train_args(args):
     print("")
     print("dim_feedforward:", args.dim_feedforward)
     print("dropout:", args.dropout)
+    print("ablation_mode:", args.ablation_mode)
     print(SEPERATOR)
     print("")
 
@@ -101,6 +104,7 @@ def parse_eval_args():
     parser.add_argument("-batch_size", type=int, default=2, help="Batch size to use")
 
     parser.add_argument("--rpr", action="store_true", help="Use a modified Transformer for Relative Position Representations")
+    parser.add_argument("-ce_smoothing", type=float, default=None, help="Smoothing parameter for smoothed cross entropy loss (defaults to no smoothing)")
     parser.add_argument("-max_sequence", type=int, default=2048, help="Maximum midi sequence to consider in the model")
     parser.add_argument("-n_layers", type=int, default=6, help="Number of decoder layers to use")
     parser.add_argument("-num_heads", type=int, default=8, help="Number of heads to use for multi-head attention")
