@@ -8,7 +8,7 @@ RANGE_NOTE_OFF = 128
 RANGE_TIME_SHIFT = 100
 RANGE_VEL = 32
 RANGE_CONTOUR_INTERVAL = 201  # 0-200 (对应-100到+100)
-RANGE_CONTOUR_DURATION = 200   # 1-50
+RANGE_CONTOUR_DURATION = 150   # 1-150  duration in deciseconds (0.1 second) range:0.1～15.0s
 
 START_IDX = {
     'note_on': 0,
@@ -238,11 +238,12 @@ def encode_midi(file_path):
         # extract the contour with error handling
         try:
             melody_contour_extractor = MelodyContourExtractor(notes)
-            contour = melody_contour_extractor.get_final_contour()  # contour[0] = (start_time, interval)
-
-            ## Plot the contour
-            # melody_contour_extractor.plot_segment(start_time=500, duration=100)
-            # plt.savefig('./zzz-figs/contour_500_600.png', dpi=300, bbox_inches='tight')
+            contour = melody_contour_extractor.get_final_contour()  # contour[0] = [start_time, interval, duration], here duration is in seconds
+            # print('contour: ', contour)
+            
+            # # Plot the contour
+            # melody_contour_extractor.plot_segment(start_time=0, duration=100)
+            # plt.savefig('./zzz-figs/july4/contour_no4_0_100_test_th2_2.png', dpi=300, bbox_inches='tight')
             # plt.show()
         
             contours.append(contour)
@@ -277,11 +278,15 @@ def encode_midi(file_path):
                 if abs(snote.time - start_time) < 0.05:  # 时间容差
                     # print('start_time, (interval, duration): ', start_time, (interval, duration))
                     # 映射interval到0-200范围
-                    mapped_interval = max(0, min(200, interval + 100))
+                    mapped_interval = max(0, min(RANGE_CONTOUR_INTERVAL, interval + 100))   #改范围，现在可能很sparse--comment:查过了，有些确实需要范围到+-70，但大部分是+——30
                     
-                    # 将duration转换为与time_shift相同的单位 (0.01秒)
-                    duration_in_centiseconds = int(duration * 100)  # 秒转0.01秒
-                    mapped_duration = max(1, min(200, duration_in_centiseconds))
+                    # v1  将duration转换为与time_shift相同的单位 (0.01秒)
+                    # duration_in_centiseconds = int(duration * 100)  # 秒转0.01秒
+                    # mapped_duration = max(1, min(200, duration_in_centiseconds))
+                    
+                    # v2  time_shift的单位 (0.01秒), duration的单位 (0.1秒)
+                    duration_in_deciseconds = int(duration * 10)  # 1秒转0.1秒 
+                    mapped_duration = max(1, min(RANGE_CONTOUR_DURATION, duration_in_deciseconds))
                     # print('mapped_duration: ', mapped_duration)
                     # print('mapped_interval: ', mapped_interval)
                     # 插入轮廓事件
@@ -382,17 +387,25 @@ def decode_midi(idx_array, file_path=None):
     return mid
 
 
-if __name__ == '__main__':
-    encoded = encode_midi('data/maestro-v2.0.0/2004/MIDI-Unprocessed_SMF_02_R1_2004_01-05_ORIG_MID--AUDIO_02_R1_2004_05_Track05_wav.midi')
+# if __name__ == '__main__':
+#     path = 'data/maestro-v2.0.0/2018/MIDI-Unprocessed_Recital1-3_MID--AUDIO_02_R1_2018_wav--2.midi' 
+#     encoded = encode_midi(path)
+    
+    
+    
+    
+    
+    
+    
     # print('encoded: ', encoded)
     # decided = decode_midi(encoded,file_path='test.mid')
 
-    ins = pretty_midi.PrettyMIDI('data/maestro-v2.0.0/2004/MIDI-Unprocessed_SMF_02_R1_2004_01-05_ORIG_MID--AUDIO_02_R1_2004_05_Track05_wav.midi')
-    print('ins: ', ins)
-    print('ins.instruments[0]: ', ins.instruments[0])
-    for i in ins.instruments:
-        print('i.control_changes: ', i.control_changes)
-        print('i.notes: ', i.notes)
+    # ins = pretty_midi.PrettyMIDI('data/maestro-v2.0.0/2004/MIDI-Unprocessed_SMF_02_R1_2004_01-05_ORIG_MID--AUDIO_02_R1_2004_05_Track05_wav.midi')
+    # print('ins: ', ins)
+    # print('ins.instruments[0]: ', ins.instruments[0])
+    # for i in ins.instruments:
+    #     print('i.control_changes: ', i.control_changes)
+    #     print('i.notes: ', i.notes)
 
     # ins = pretty_midi.PrettyMIDI('data/commu/commu_midi/train/raw/commu00005.mid')
     # print('文件信息:')

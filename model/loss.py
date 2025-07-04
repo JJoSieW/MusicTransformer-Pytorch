@@ -126,12 +126,12 @@ class ContourLoss(nn.Module):
                     continue
 
                 contour_interval = event.value
-                contour_duration = event_sequence[i+1].value
+                contour_duration = (event_sequence[i+1].value)*10 #注意！contour_duration unit 0.1s, time_shift unit 0.01s
                 time_passed = 0
-                note_pitches = []
-                note_vectors = []
-                first_note_time = None
-                first_note_pitch = None
+                # note_pitches = []
+                # note_vectors = []
+                # first_note_time = None
+                # first_note_pitch = None
 
                 # 收集这段 contour_duration 内所有 note_on
                 notes_in_segment = []
