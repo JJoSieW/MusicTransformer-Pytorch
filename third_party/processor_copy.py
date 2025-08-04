@@ -217,7 +217,7 @@ def _note_preprocess(susteins, notes):
     return note_stream
 
 
-def encode_midi(file_path):
+def encode_midi(file_path, contour_extract=False):
     events = []
     notes = []
     contours = []
@@ -256,6 +256,9 @@ def encode_midi(file_path):
             # 直接返回None，跳过整个文件
             return None
 
+    if contour_extract:
+        return notes, contours
+    
     # 创建轮廓时间映射
     contour_map = {}
     if contours and contours[0]:  # 检查contour是否为空
