@@ -178,6 +178,76 @@ def prep_custom_midi(custom_midi_root, output_dir, valid_p = 0.1, test_p = 0.2):
     print("Num Test:", test_count)
     return True
 
+def contour_extract_analysis(custom_midi_root, output_dir, valid_p = 0.1, test_p = 0.2):
+    """
+    ----------
+    Implement contour extract analysis and save the result to the output folder.
+    Output structure:
+        [
+            {
+                "file": "piece001.mid",
+                "notes": [
+                    {"start": 0.0, "end": 0.5, "pitch": 60, "velocity": 90},
+                    {"start": 0.5, "end": 1.0, "pitch": 62, "velocity": 85},
+                    ...
+                ],
+                "contour": [
+                    [0.0, +4, 2.0],
+                    [2.0, -5, 1.5],
+                    ...
+                ]
+            },
+            {
+                "file": "piece002.mid",
+                "notes": [...],
+                "contour": [...]
+            },
+            ...
+        ]
+    ----------
+    """
+    
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print("Found", len(os.listdir(custom_midi_root)), "pieces")
+    print("Preprocessing data...")
+    total_count = 0
+    all_data = []
+
+    for piece in os.listdir(custom_midi_root):
+            
+        mid         = os.path.join(custom_midi_root, piece)
+        f_name      = piece.split(".")[0] + ".pickle"
+
+        notes, contours = midi_processor.encode_midi(mid, contour_extract=True)
+        
+        # 转换notes为字典格式
+        notes_dict = [{"start": note.start, "end": note.end, "pitch": note.pitch, "velocity": note.velocity} for note in notes]
+        
+        # 转换contours为列表格式
+        contour_list = [{"start_time": start_time, "interval": interval, "duration": duration} for start_time, interval, duration in contours[0]] if contours and contours[0] else []
+        
+        # 创建数据条目
+        data_entry = {
+            "file": piece,
+            "notes": notes_dict,
+            "contour": contour_list
+        }
+        
+        # 保存单个文件到JSON
+        json_filename = piece.split(".")[0] + ".json"
+        json_file = os.path.join(output_dir, json_filename)
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(data_entry, f, indent=4, ensure_ascii=False)
+        
+        total_count += 1
+        if(total_count % 50 == 0):
+            print(total_count, "/", len(os.listdir(custom_midi_root)))
+    
+    print(f"总共处理了 {total_count} 个文件")
+    print(f"所有JSON文件已保存到: {output_dir}")
+
+    return True
 
 # parse_args
 def parse_args():
@@ -194,6 +264,7 @@ def parse_args():
     parser.add_argument("-root", type=str, required=True, help="Root folder for the Maestro dataset or for custom data.")
     parser.add_argument("-output_dir", type=str, required=True, help="Output folder to put the preprocessed midi into.")
     parser.add_argument("--custom_dataset", action="store_true", help="Whether or not the specified root folder contains custom data.")
+    parser.add_argument("--contour_extract_analysis", action="store_true", help="Whether or not implement contour extract analysis.")
 
     return parser.parse_args()
 
@@ -210,14 +281,20 @@ def main():
     args            = parse_args()
     root            = args.root
     output_dir      = args.output_dir
-
-    print("Preprocessing midi files and saving to", output_dir)
-    if args.custom_dataset:
-        prep_custom_midi(root, output_dir)
+    
+    if args.contour_extract_analysis:
+        print("Implementing contour extract analysis and saving to", output_dir)
+        contour_extract_analysis(root, output_dir)
+        print("Done!")
+        print("")
     else:
-        prep_maestro_midi(root, output_dir)
-    print("Done!")
-    print("")
+        print("Preprocessing midi files and saving to", output_dir)
+        if args.custom_dataset:
+            prep_custom_midi(root, output_dir)
+        else:
+            prep_maestro_midi(root, output_dir)
+        print("Done!")
+        print("")
 
 if __name__ == "__main__":
     main()
