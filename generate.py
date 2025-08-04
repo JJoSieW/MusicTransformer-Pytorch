@@ -23,6 +23,12 @@ from third_party.processor_copy import (
     RANGE_CONTOUR_DURATION,
 )
 
+# 添加绘图相关的导入
+import pretty_midi
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+import numpy as np
+
 
 START_IDX = {
     'note_on': 0,
@@ -87,8 +93,8 @@ def main():
     model.load_state_dict(torch.load(args.model_weights))
 
     # Saving primer first
-    f_path = os.path.join(args.output_dir, "primer.mid")
-    decode_midi(primer[:args.num_prime].cpu().numpy(), file_path=f_path)
+    primer_path = os.path.join(args.output_dir, "primer.mid")
+    decode_midi(primer[:args.num_prime].cpu().numpy(), file_path=primer_path)
 
     # INTERACTIVE GENERATION USING ROLLING WINDOW + CONTOUR CONTROL
     model.eval()
@@ -109,11 +115,22 @@ def main():
                 print("Invalid input. Please enter an integer.")
                 continue
 
-            print("Enter contour_duration (in time units (0.01s), int between 0 and 199):")
+            # print("Enter contour_duration (in time units (0.1s), int between 1 and 150):")
+            # try:
+            #     contour_duration = int(input(">> ").strip())
+            # except ValueError:
+            #     print("Invalid input. Please enter an integer.")
+            #     continue
+            
+            print("Enter contour_duration (seconds, e.g. 3.5 for 3.5s, between 1.0 and 15.0):")
             try:
-                contour_duration = int(input(">> ").strip())
+                duration_sec = float(input(">> ").strip())
+                if not (1.0 <= duration_sec <= 15.0):
+                    print("Please enter a value between 0.0 and 15.0 seconds.")
+                    continue
+                contour_duration = int(round(duration_sec * 10))  # 转成0.1s单位的整数
             except ValueError:
-                print("Invalid input. Please enter an integer.")
+                print("Invalid input. Please enter a number (e.g. 3.5).")
                 continue
 
             # Construct input sequence with contour tokens
@@ -146,12 +163,154 @@ def main():
             print(f"Generated {len(new_tokens)} new tokens. Current total: {len(output_sequence)} tokens.")
 
         # Save final output
-        f_path = os.path.join(args.output_dir, "rolling_contour_output.mid")
-        decode_midi(output_sequence, file_path=f_path)
-        print(f"Final output saved to {f_path}")
+        generated_path = os.path.join(args.output_dir, "rolling_contour_output.mid")
+        decode_midi(output_sequence, file_path=generated_path)
+        print(f"Final output saved to {generated_path}")
 
+    # 生成对比图
+    plot_primer_vs_generated(primer_path, generated_path, args.output_dir)
 
+def plot_primer_vs_generated(primer_file, generated_file, output_dir):
+    """
+    绘制primer和generated sample的钢琴卷帘图对比
+    """
+    try:
+        # 加载两个MIDI文件
+        primer_data = pretty_midi.PrettyMIDI(primer_file)
+        generated_data = pretty_midi.PrettyMIDI(generated_file)
+        
+        # 获取音符
+        primer_notes = []
+        for instrument in primer_data.instruments:
+            for note in instrument.notes:
+                # print(note)
+                primer_notes.append({
+                    'pitch': note.pitch,
+                    'start': note.start,
+                    'end': note.end,
+                    'velocity': note.velocity
+                })
+        
+        generated_notes = []
+        for instrument in generated_data.instruments:
+            for note in instrument.notes:
+                generated_notes.append({
+                    'pitch': note.pitch,
+                    'start': note.start,
+                    'end': note.end,
+                    'velocity': note.velocity
+                })
+        
+        # 创建图形
+        fig, ax = plt.subplots(figsize=(20, 8))
+        
+        # 设置颜色
+        primer_color = 'blue'
+        generated_color = 'red'
+        
+        # 绘制primer音符
+        if primer_notes:
+            for note in primer_notes:
+                rect = Rectangle(
+                    (note['start'], note['pitch'] - 0.4),
+                    note['end'] - note['start'],
+                    0.8,
+                    facecolor=primer_color,
+                    alpha=0.7,
+                    edgecolor='black',
+                    linewidth=0.5
+                )
+                ax.add_patch(rect)
+        
+        # 绘制generated音符，按primer_end_time分割
+        primer_end_time = primer_data.get_end_time() if primer_notes else 0
+        if generated_notes:
+            for note in generated_notes:
+                start = note['start']
+                end = note['end']
+                pitch = note['pitch']
 
+                if end <= primer_end_time:
+                    # Entirely in primer range
+                    rect = Rectangle(
+                        (start, pitch - 0.4),
+                        end - start,
+                        0.8,
+                        facecolor=primer_color,
+                        alpha=0.7,
+                        edgecolor='black',
+                        linewidth=0.5
+                    )
+                    ax.add_patch(rect)
+                elif start >= primer_end_time:
+                    # Entirely in generated range
+                    rect = Rectangle(
+                        (start, pitch - 0.4),
+                        end - start,
+                        0.8,
+                        facecolor=generated_color,
+                        alpha=0.7,
+                        edgecolor='black',
+                        linewidth=0.5
+                    )
+                    ax.add_patch(rect)
+                else:
+                    # Split at primer_end_time
+                    rect1 = Rectangle(
+                        (start, pitch - 0.4),
+                        primer_end_time - start,
+                        0.8,
+                        facecolor=primer_color,
+                        alpha=0.7,
+                        edgecolor='black',
+                        linewidth=0.5
+                    )
+                    ax.add_patch(rect1)
+
+                    rect2 = Rectangle(
+                        (primer_end_time, pitch - 0.4),
+                        end - primer_end_time,
+                        0.8,
+                        facecolor=generated_color,
+                        alpha=0.7,
+                        edgecolor='black',
+                        linewidth=0.5
+                    )
+                    ax.add_patch(rect2)
+        
+        # 添加分隔线
+        if primer_notes and generated_notes:
+            ax.axvline(x=primer_end_time, color='black', linestyle='--', linewidth=2, alpha=0.8)
+            ax.text(primer_end_time, ax.get_ylim()[1] * 0.95, 'Primer End', 
+                   rotation=90, verticalalignment='top', fontsize=12, fontweight='bold')
+        
+        # 设置坐标轴
+        ax.set_ylim(0, 128)  # MIDI pitch 通常是 0-127
+        ax.set_xlim(0, primer_end_time + 40)  # 给足够显示范围
+        ax.set_xlabel('Time (seconds)')
+        ax.set_ylabel('Pitch')
+        ax.set_title('Primer vs Generated Sample Comparison')
+        ax.grid(True, alpha=0.3)
+        
+        # 添加图例
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor=primer_color, alpha=0.7, label='Primer'),
+            Patch(facecolor=generated_color, alpha=0.7, label='Generated')          
+        ]
+        ax.legend(handles=legend_elements, loc='upper right')
+        
+        plt.tight_layout()
+        
+        # 保存图片
+        output_file = os.path.join(output_dir, "primer_vs_generated_comparison.png")
+        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        print(f"对比图已保存到: {output_file}")
+        
+        plt.close()  # 关闭图形以释放内存
+        
+    except Exception as e:
+        print(f"生成对比图时出错: {e}")
 
 if __name__ == "__main__":
     main()

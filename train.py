@@ -23,11 +23,13 @@ import json
 import matplotlib.pyplot as plt
 
 
+
+
 CSV_HEADER = ["Epoch", "Learn rate", "Avg Train loss", "Train Accuracy", "Avg Val loss", "Val accuracy"]
 
 # Baseline is an untrained epoch that we evaluate as a baseline loss and accuracy
 BASELINE_EPOCH = -1
-
+ 
 # main
 def main():
     """
@@ -126,6 +128,8 @@ def main():
 
     contour_aware_loss = ContourLoss(margin=0.87)
     
+    
+    # previous verison: 0-15epochs  λ:0-0.3; >15epochs λ=0.3
     
     # ① 基础学习阶段  0–15    仅 ce_loss         λ = 0
     # ② 引导轮廓阶段  15–30   ce + λ·contour     λ 从 0 增到 0.3
